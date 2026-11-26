@@ -1,0 +1,385 @@
+import csv
+import json
+import os
+import random
+from collections import Counter
+from dataclasses import asdict, dataclass
+from datetime import datetime, timedelta
+
+# Defensive import for Matplotlib
+try:
+    import matplotlib.pyplot as plt
+
+    HAS_MATPLOTLIB = True
+except ImportError:
+    HAS_MATPLOTLIB = False
+
+JSON_FILE = "cleanliness_reports.json"
+CSV_FILE = "cleanliness_reports.csv"
+REPORT_MD_FILE = "executive_summary.md"
+CHART_FILE = "cleanliness_trends.png"
+
+
+@dataclass
+class CleanlinessReport:
+    report_id: str
+    location: str
+    category: str
+    severity: int  # 1 (Minor) to 5 (Critical)
+    status: str  # "Open", "In Progress", "Resolved"
+    reported_by: str
+    timestamp: str
+    notes: str
+
+
+# ==========================================
+# 1. DEFENSIVE INPUT VALIDATION HELPERS
+# ==========================================
+def get_valid_string(prompt: str, min_len: int = 2) -> str:
+    while True:
+        val = input(prompt).strip()
+        if len(val) >= min_len:
+            return val
+        print(
+            f"  [!] Error: Input must be at least {min_len} characters long."
+        )
+
+
+def get_valid_int(prompt: str, min_val: int, max_val: int) -> int:
+    while True:
+        raw = input(prompt).strip()
+        try:
+            num = int(raw)
+            if min_val <= num <= max_val:
+                return num
+            print(
+                f"  [!] Error: Enter a number between {min_val} and {max_val}."
+            )
+        except ValueError:
+            print("  [!] Error: Invalid input. Please enter a whole number.")
+
+
+def get_valid_choice(prompt: str, valid_options: list) -> str:
+    options_lower = {opt.lower(): opt for opt in valid_options}
+    while True:
+        val = input(prompt).strip().lower()
+        if val in options_lower:
+            return options_lower[val]
+        print(f"  [!] Error: Choose one of {', '.join(valid_options)}.")
+
+
+# ==========================================
+# 2. DATA PERSISTENCE & SEEDING[cite: 1, 2, 3]
+# ==========================================
+def seed_sample_data() -> list[CleanlinessReport]:
+    """Generates 30 realistic sample records for demo & testing[cite: 2]."""
+    locations = [
+        "Main Library - 2nd Floor",
+        "Central Cafeteria",
+        "Science Block Lab B",
+        "North Dormitory Courtyard",
+        "Engineering Auditorium",
+        "Student Union Lounge",
+    ]
+    categories = [
+        "Litter/Trash",
+        "Spill/Hazard",
+        "Overflowing Bin",
+        "Restroom Maintenance",
+    ]
+    statuses = ["Open", "In Progress", "Resolved"]
+    reporters = ["Alex M.", "Priya S.", "Jordan K.", "Rohan D.", "Sarah L."]
+
+    records = []
+    base_time = datetime.now() - timedelta(days=14)
+    random.seed(42)  # Consistent demo data
+
+    for i in range(1, 31):
+        # Intentionally make Cafeteria and Library recurring hotspots
+        loc = random.choices(locations, weights=[3, 4, 1, 2, 1, 2], k=1)[0]
+        cat = random.choice(categories)
+        sev = random.choices([1, 2, 3, 4, 5], weights=[1, 2, 4, 3, 2], k=1)[0]
+        stat = random.choices(statuses, weights=[3, 2, 5], k=1)[0]
+        ts = (base_time + timedelta(hours=i * 11)).strftime("%Y-%m-%d %H:%M")
+
+        records.append(
+            CleanlinessReport(
+                report_id=f"REP-{1000 + i}",
+                location=loc,
+                category=cat,
+                severity=sev,
+                status=stat,
+                reported_by=random.choice(reporters),
+                timestamp=ts,
+                notes=f"Routine inspection report #{i} ({cat.lower()})",
+            )
+        )
+    return records
+
+
+def load_reports() -> list[CleanlinessReport]:
+    """Loads reports from JSON, handling missing or corrupted files safely[cite: 3]."""
+    if not os.path.exists(JSON_FILE):
+        print(
+            "[*] No existing database found. Seeding 30 sample records for demo..."
+        )
+        seeded = seed_sample_data()
+        save_reports(seeded)
+        return seeded
+
+    try:
+        with open(JSON_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            return [CleanlinessReport(**item) for item in data]
+    except (json.JSONDecodeError, TypeError, KeyError):
+        print(
+            "[!] Warning: Corrupted storage detected. Re-initializing clean database..."
+        )
+        seeded = seed_sample_data()
+        save_reports(seeded)
+        return seeded
+
+
+def save_reports(reports: list[CleanlinessReport]) -> None:
+    """Saves records to both JSON and CSV formats."""
+    # Save JSON
+    with open(JSON_FILE, "w", encoding="utf-8") as f:
+        json.dump([asdict(r) for r in reports], f, indent=4)
+
+    # Save CSV
+    if reports:
+        fieldnames = list(asdict(reports[0]).keys())
+        with open(CSV_FILE, "w", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(f, fieldnames=fieldnames)
+            writer.writeheader()
+            for r in reports:
+                writer.writerow(asdict(r))
+
+
+# ==========================================
+# 3. CORE LOGIC & REPORTING FEATURES
+# ==========================================
+def add_new_report(reports: list[CleanlinessReport]) -> None:
+    print("\n--- RECORD NEW CLEANLINESS REPORT ---")
+    location = get_valid_string("Enter Location (e.g., Central Cafeteria): ")
+    category = get_valid_choice(
+        "Category (Litter/Trash, Spill/Hazard, Overflowing Bin, Restroom Maintenance): ",
+        [
+            "Litter/Trash",
+            "Spill/Hazard",
+            "Overflowing Bin",
+            "Restroom Maintenance",
+        ],
+    )
+    severity = get_valid_int("Severity Level (1=Minor to 5=Critical): ", 1, 5)
+    reporter = get_valid_string("Your Name / ID: ")
+    notes = input("Additional Notes (optional): ").strip() or "None"
+
+    new_id = f"REP-{1001 + len(reports)}"
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
+
+    report = CleanlinessReport(
+        report_id=new_id,
+        location=location,
+        category=category,
+        severity=severity,
+        status="Open",
+        reported_by=reporter,
+        timestamp=timestamp,
+        notes=notes,
+    )
+    reports.append(report)
+    save_reports(reports)
+    print(f"\n[+] Success! Report {new_id} saved to {JSON_FILE} and {CSV_FILE}.")
+    if severity >= 4:
+        print(
+            f"  [ALERT] High severity ({severity}/5) flagged for immediate custodial dispatch!"
+        )
+
+
+def display_table(records: list[CleanlinessReport]) -> None:
+    if not records:
+        print("\n  No matching records found.")
+        return
+    print(
+        "\n"
+        + f"{'ID':<9} | {'Location':<25} | {'Category':<20} | {'Sev':<3} | {'Status':<11} | {'Date'}"
+    )
+    print("-" * 92)
+    for r in records:
+        print(
+            f"{r.report_id:<9} | {r.location[:25]:<25} | {r.category[:20]:<20} | {r.severity:<3} | {r.status:<11} | {r.timestamp}"
+        )
+
+
+def search_reports(reports: list[CleanlinessReport]) -> None:
+    print("\n--- SEARCH & FILTER RECORDS ---")
+    keyword = (
+        input("Enter location keyword or status (or press Enter for all): ")
+        .strip()
+        .lower()
+    )
+    filtered = [
+        r
+        for r in reports
+        if keyword in r.location.lower()
+        or keyword in r.status.lower()
+        or keyword in r.category.lower()
+    ]
+    display_table(filtered)
+
+
+def update_report_status(reports: list[CleanlinessReport]) -> None:
+    print("\n--- UPDATE REPORT STATUS ---")
+    rep_id = input("Enter Report ID (e.g., REP-1005): ").strip().upper()
+    for r in reports:
+        if r.report_id == rep_id:
+            print(
+                f"Current Status for {r.location} ({r.category}): [{r.status}]"
+            )
+            new_status = get_valid_choice(
+                "New Status (Open, In Progress, Resolved): ",
+                ["Open", "In Progress", "Resolved"],
+            )
+            r.status = new_status
+            save_reports(reports)
+            print(f"[+] Updated {rep_id} to '{new_status}'.")
+            return
+    print(f"[!] Report ID '{rep_id}' not found.")
+
+
+def generate_executive_summary(reports: list[CleanlinessReport]) -> None:
+    print("\n========================================================")
+    print("       CAMPUS CLEANLINESS EXECUTIVE SUMMARY             ")
+    print("========================================================")
+    if not reports:
+        print("No data available.")
+        return
+
+    total = len(reports)
+    open_cases = sum(1 for r in reports if r.status == "Open")
+    in_prog = sum(1 for r in reports if r.status == "In Progress")
+    resolved = sum(1 for r in reports if r.status == "Resolved")
+    avg_sev = sum(r.severity for r in reports) / total
+    critical_open = [r for r in reports if r.severity >= 4 and r.status != "Resolved"]
+
+    # Recurring area detection
+    loc_counts = Counter(r.location for r in reports)
+    top_hotspots = loc_counts.most_common(3)
+
+    print(f"Total Reports Logged : {total}")
+    print(
+        f"Status Breakdown     : {open_cases} Open | {in_prog} In Progress | {resolved} Resolved"
+    )
+    print(f"Average Severity     : {avg_sev:.2f} / 5.00")
+
+    print("\n[RECURRING HOTSPOT AREAS]")
+    for rank, (loc, count) in enumerate(top_hotspots, 1):
+        pct = (count / total) * 100
+        flag = " <-- [RECURRING ALERT]" if count >= 3 else ""
+        print(f"  {rank}. {loc:<26} : {count} reports ({pct:.1f}%){flag}")
+
+    if critical_open:
+        print(
+            f"\n[!] THRESHOLD WARNING: {len(critical_open)} unresolved high-severity (4-5) incidents require action:"
+        )
+        for c in critical_open[:5]:
+            print(
+                f"    - {c.report_id} | {c.location} | {c.category} (Severity {c.severity})"
+            )
+
+    # Export Markdown summary (Stretch Feature)
+    with open(REPORT_MD_FILE, "w", encoding="utf-8") as md:
+        md.write("# Campus Cleanliness Executive Summary\n\n")
+        md.write(
+            f"- **Generated:** {datetime.now().strftime('%Y-%m-%d %H:%M')}\n"
+        )
+        md.write(f"- **Total Reports:** {total}\n")
+        md.write(f"- **Average Severity:** {avg_sev:.2f}/5.0\n\n")
+        md.write("## Top Recurring Locations\n")
+        for loc, count in top_hotspots:
+            md.write(f"- **{loc}:** {count} incidents\n")
+    print(f"\n[+] Markdown report exported to '{REPORT_MD_FILE}'.")
+
+
+def generate_visual_charts(reports: list[CleanlinessReport]) -> None:
+    if not HAS_MATPLOTLIB:
+        print(
+            "\n[!] Matplotlib not installed. Run 'pip install matplotlib' to enable charts."
+        )
+        return
+    if not reports:
+        print("\n[!] No data to plot.")
+        return
+
+    loc_counts = Counter(r.location for r in reports)
+    cat_counts = Counter(r.category for r in reports)
+
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5))
+    fig.suptitle(
+        "Campus Cleanliness Analytics Dashboard", fontsize=14, fontweight="bold"
+    )
+
+    # Subplot 1: Reports by Location
+    locations = [
+        loc.replace(" - ", "\n") for loc in loc_counts.keys()
+    ]
+    ax1.barh(locations, list(loc_counts.values()), color="#2b7bba")
+    ax1.set_title("Incidents by Campus Location")
+    ax1.set_xlabel("Number of Reports")
+    ax1.invert_yaxis()
+
+    # Subplot 2: Reports by Category
+    ax2.pie(
+        list(cat_counts.values()),
+        labels=list(cat_counts.keys()),
+        autopct="%1.1f%%",
+        startangle=140,
+        colors=["#66c2a5", "#fc8d62", "#8da0cb", "#e78ac3"],
+    )
+    ax2.set_title("Incidents by Issue Category")
+
+    plt.tight_layout()
+    plt.savefig(CHART_FILE, dpi=150)
+    print(f"\n[+] Visual chart saved to '{CHART_FILE}'. Opening window...")
+    plt.show()
+
+
+# ==========================================
+# 4. MAIN INTERACTIVE MENU LOOP
+# ==========================================
+def main():
+    reports = load_reports()
+    while True:
+        print("\n========================================================")
+        print("        CAMPUS CLEANLINESS REPORTER (v1.0)              ")
+        print("========================================================")
+        print("  1. Record New Cleanliness Report")
+        print("  2. View All / Search Reports")
+        print("  3. Update Report Status")
+        print("  4. Generate Executive Summary & Hotspot Analysis")
+        print("  5. Export Visual Charts (Matplotlib)")
+        print("  6. Exit")
+        print("--------------------------------------------------------")
+
+        choice = input("Select an option (1-6): ").strip()
+        if choice == "1":
+            add_new_report(reports)
+        elif choice == "2":
+            search_reports(reports)
+        elif choice == "3":
+            update_report_status(reports)
+        elif choice == "4":
+            generate_executive_summary(reports)
+        elif choice == "5":
+            generate_visual_charts(reports)
+        elif choice == "6":
+            print("Saving state and exiting. Goodbye!")
+            save_reports(reports)
+            break
+        else:
+            print("[!] Invalid choice. Please select 1 through 6.")
+
+
+if __name__ == "__main__":
+    main()
